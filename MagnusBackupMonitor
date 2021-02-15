@@ -4,12 +4,15 @@
 #This script assumes Magnus is installed on your system drive. If it's not, you need to edit the $DriveLetter variable.
 #In addition to running response code, this script creates a logs subdirectory in your install folder and created dated logs within. 
 
+Import-Module $env:SyncroModule
+
+
 #How far back to check logs, I recommend no less than 3 days. Less can cause error spam.
 
 $Days = 4
 
 
-#Enter your magnus software name here. No spaces at the start or end
+#Enter your magnus software name here. No spaces at the start or end.
 $MagnusName = "YOUR BACKUP NAME HERE"
 
 
@@ -39,7 +42,7 @@ $MagnusCatchall =  (Get-EventLog -LogName application -Source "backup-tool.exe" 
 
 if ($MagnusWarn) { writeLog "Backup warnings found"
 Write "Backup warnings found"
-#YOUR RESPONSE CODE HERE
+Rmm-Alert -Category "Magnus" -Body "Backup Error detected" 
 exit }
 
 else {
@@ -47,7 +50,7 @@ if ($MagnusError)
 {
 WriteLog "Backup errors found"
 Write "Backup errors found"
-#YOUR RESPONSE CODE HERE
+Rmm-Alert -Category "Magnus" -Body "Backup Error detected" 
 exit
 }
 else
@@ -56,11 +59,10 @@ if (!$MagnusCatchall)
 {
 WriteLog "No Magnus events found, perhaps not running or system was offline"
 Write "No Magnus events found, perhaps not running or system was offline"
-#YOUR RESPONSE CODE HERE
+Rmm-Alert -Category "Magnus" -Body "No backup entries detected, confirm Magnus is working" 
 } 
 }}}
 
 if ($MagnusStatus) { writeLog "Successful backup found within the last $days days."
 write "Successful backup found"
-#YOUR RESPONSE CODE HERE (if wanted)
-}
+Close-Rmm-Alert -Category "Magnus"}
