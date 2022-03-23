@@ -1,3 +1,5 @@
+DO NOT USE, currently not working properly. 
+
 #Version 1.2
 #Script created by Samantha Motz - Motz Technologies LLC- Sam@motztech.com. Tested on PowerShell 5 and Windows 10. May not work on lower versions. Use at your own risk. 
 #This script will check for a successful Magnus backup within the amount of days set. If it can't find one, it will check for warnings first and then errors. If no entries are found at all, it reports that as well.
