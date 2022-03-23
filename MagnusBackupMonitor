@@ -1,8 +1,9 @@
-#Version 1.2
+#Version 1.3
+
 #Script created by Samantha Motz - Motz Technologies LLC- Sam@motztech.com. Tested on PowerShell 5 and Windows 10. May not work on lower versions. Use at your own risk. 
-#This script will check for a successful Magnus backup within the amount of days set. If it can't find one, it will check for warnings first and then errors. If no entries are found at all, it reports that as well.
+#This script will check for errors first, then warnings, and finally successful backups. If no entries are found at all, it reports that as well.
 #This script assumes Magnus is installed on your system drive. If it's not, you need to edit the $DriveLetter variable.
-#In addition to running response code, this script creates a logs subdirectory in your install folder and created dated logs within. 
+#In addition to running response code, this script creates a logs subdirectory in your install folder and creates dated logs within. 
 
 Import-Module $env:SyncroModule
 
@@ -12,8 +13,8 @@ Import-Module $env:SyncroModule
 $Days = 4
 
 
-#Enter your magnus software name here. No spaces at the start or end.
-$MagnusName = "YOUR BACKUP NAME HERE"
+#Enter your magnus software name here
+$MagnusName = "Motz Technologies Unlimited Backup"
 
 
 #end of custom variables
@@ -33,36 +34,27 @@ function WriteLog
 Mkdir "$DriveLetter\Program Files\$MagnusName\Logs" -ErrorAction SilentlyContinue
 
 $Date = (get-date -f yyyy-MM-dd)
-$MagnusStatus = (Get-EventLog -LogName application -Source "backup-tool.exe" -EntryType Information -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "51"} -ErrorAction SilentlyContinue)
+$MagnusSuccess = (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Information -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "52"})
+$MagnusWarn = (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Warning -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "52"}) 
+$MagnusError = (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Error -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "52"})
+$MagnusCatchall =  (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -After (Get-Date).AddDays(-7)) 
 
-if (!$MagnusStatus) { 
-$MagnusWarn = (Get-EventLog -LogName application -Source "backup-tool.exe" -EntryType Warning -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "51"} -ErrorAction SilentlyContinue) 
-$MagnusError = (Get-EventLog -LogName application -Source "backup-tool.exe" -EntryType Error -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "51"} -ErrorAction SilentlyContinue)
-$MagnusCatchall =  (Get-EventLog -LogName application -Source "backup-tool.exe" -After (Get-Date).AddDays(-$Days) -ErrorAction SilentlyContinue)  
-
-if ($MagnusWarn) { writeLog "Backup warnings found"
-Write "Backup warnings found"
-Rmm-Alert -Category "Magnus" -Body "Backup Error detected" 
-exit }
-
-else {
 if ($MagnusError)
 {
 WriteLog "Backup errors found"
 Write "Backup errors found"
-Rmm-Alert -Category "Magnus" -Body "Backup Error detected" 
-exit
-}
-else
-{
+Rmm-Alert -Category "Magnus" -Body "Backup Error detected, troubleshooting required" 
+exit}
+
+if ($MagnusWarn) { writeLog "Backup warnings found"
+Write "Backup warnings found, may not be an issue. Check server logs"}
+
+if ($MagnusSuccess) { writeLog "Successful backup found within the last $days days."
+write "Successful backup found"
+Close-Rmm-Alert -Category "Magnus"}
+
 if (!$MagnusCatchall)
 {
 WriteLog "No Magnus events found, perhaps not running or system was offline"
 Write "No Magnus events found, perhaps not running or system was offline"
-Rmm-Alert -Category "Magnus" -Body "No backup entries detected, confirm Magnus is working" 
-} 
-}}}
-
-if ($MagnusStatus) { writeLog "Successful backup found within the last $days days."
-write "Successful backup found"
-Close-Rmm-Alert -Category "Magnus"}
+Rmm-Alert -Category "Magnus" -Body "No backup entries detected, confirm Magnus is working" }
