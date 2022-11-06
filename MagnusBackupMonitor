@@ -1,62 +1,303 @@
-#Version 1.3
-
+#Version 2.0
+#
 #Script created by Samantha Motz - Motz Technologies LLC- Sam@motztech.com. Tested on PowerShell 5 and Windows 10. May not work on lower versions. Use at your own risk. 
 #This script will check for errors first, then warnings, and finally successful backups. If no entries are found at all, it reports that as well.
-#This script assumes Magnus is installed on your system drive. If it's not, you need to edit the $DriveLetter variable.
 #In addition to running response code, this script creates a logs subdirectory in your install folder and creates dated logs within. 
+#
+#Styax example BackupMonitor.ps1 -Day 7 -PurgeLogs 24 -ExcludeCloud -SoftwareName "Tech Co Backup" -RMM "Syncro"
+#
+#Version 2.0 changes: 
+#Swiched $Days from a hard coded varaible to a runtime parameter. Default is 7
+#Switched $SoftwareName from a hard coded varaible to an optional runtime parameter.
+#Added logic to report error if software name variable is not used or is wrong. 
+#Added $PurgeLogs parameter to allow logs to be wiped after X days. Default is 31.
+#Added -ExcludeCloud switch to exclude warnings from OneDrive and Dropbox folders. May still need adjustment.
+#Added a process checker to check if the backup service and backup elevator  running if no event log entries are detected. 
+#Backup warnings and errors are now added to the daily logs
+#Created a tracking system to eliminate duplicate notifications about errors and warnings.
+#Added counters and a final report section that lists all counter stats. 
+#Added parameter and code to allow this script to work with SyncroRMM
+#Added a custom exclusion section
+#
+#Known Issues
+#Occasional false positives 
+#The first run on a new system does not always create a tracking log
+#No tracking log size limits in place. Hasn't been an issue yet but may be an issue later after years of errors reported. 
 
+param ([int]$Days,
+    [int]$PurgeLogs,
+	$SoftwareName,
+	[switch]$ExcludeCloud,
+	$RMM)
 
-#How far back to check logs, I recommend no less than 3 days. Less can cause error spam.
+#You can enter your software name below if you don't want to use the parameter.
+#This script assumes the software is installed on your system drive. If it's not, you need to edit the $DriveLetter variable.
+#$SoftwareName = "Your Backup Name"
+$CustomExcludeList = ""
+$DriveLetter = (Get-WmiObject Win32_OperatingSystem).SystemDrive
 
-$Days = 4
-
-
-#Enter your magnus software name here
-$MagnusName = "YOUR BACKUP NAME HERE"
-
+#Uncomment this section for Syncro
+#$RMM = "Syncro"
 
 #end of custom variables
+$TrackingLog = "$DriveLetter\Program files\$SoftwareName\Logs\Tracking.log"
+$LogPath = "$DriveLetter\Program files\$SoftwareName\Logs\"
+$ExcludeList = "Missing:|Without VSS|The cloud operation is not supported on a read-only volume|Access to the cloud file is denied|Dropbox|Reported 15000 errors of this type"
+$WarningCount = [int]0
+$WarningSkipped = [int]0
+$ErrorCount = [int]0
+$ErrorSkipped = [int]0
+$SuccessCount = [int]0
+$CatachAllTrigger = [int]0
 
-$DriveLetter = (Get-WmiObject Win32_OperatingSystem).SystemDrive
 
 #Credit to Molly Kelly for WriteLog Function
 function WriteLog
 {
-    Param ([string]$LogString)
-    $LogFile = "$DriveLetter\Program files\$MagnusName\Logs\$Date-BackupLog.log"
-    $DateTime = "[{0:MM/dd/yy} {0:HH:mm:ss}]" -f (Get-Date)
-    $LogMessage = "$Datetime $LogString"
-    Add-content $LogFile -value $LogMessage 
+	Param ([string]$LogString)
+	$LogFile = "$DriveLetter\Program files\$SoftwareName\Logs\$Date-BackupLog.log"
+	$DateTime = "[{0:MM/dd/yy} {0:HH:mm:ss}]" -f (Get-Date)
+	$LogMessage = "$Datetime $LogString"
+	Add-content $LogFile -value $LogMessage
 }
 
-Mkdir "$DriveLetter\Program Files\$MagnusName\Logs" -ErrorAction SilentlyContinue
+function SyncroRMM
+{
+	Import-Module $env:SyncroModule
+	
+	    if ($SuccessCount -gt "0")
+	{
+		Close-Rmm-Alert -Category "Magnus"
+	}
+    
+    if ($CatchAllTrigger -gt "0")
+	{
+		Rmm-Alert -Category "Magnus" -Body "No events found, perhaps not running or system was offline. Current Backup Service status: $CheckProcess1 Current Backup Elevator Service status $CheckProcess2"
+		exit
+	}
+	
+	if ($WarningCount -gt "0")
+	{
+		
+		Rmm-Alert -Category "Magnus" -Body "Backup Warnings detected"
+	}
+	
+	if ($ErrorCount -gt "0")
+	{
+		
+		Rmm-Alert -Category "Magnus" -Body "Backup Error detected, troubleshooting required"
+	}
+	
+
+}
+
+if (!$SoftwareName)
+{
+	{
+		write 'ERROR: $SoftwareName required'
+		exit
+	}
+}
+
+if (!(Test-Path "$DriveLetter\Program files\$SoftwareName"))
+{
+	write "ERROR: Software folder not found. Perhaps misspelled or missing quotes"
+	exit
+}
+
+
+if (!(Test-Path $LogPath))
+{
+	New-Item -ItemType "directory" -Path "$LogPath"
+}
+
+#CustomExcludeList can't be blank or is causes issues with the search
+if (!$CustomExcludeList)
+{
+	$CustomExcludeList = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+}
+
+if (Test-Path $TrackingLog)
+{
+	$CheckTracking = (Get-Content "$TrackingLog")
+}
+else
+{
+	write "No tracking log exists, creating it."
+	write "System.Diagnostics.EventLogEntry" | Out-File "$TrackingLog" -Append -Encoding ascii
+	$CheckTracking = (Get-Content "$TrackingLog")
+}
+
+
+if (!$PurgeLogs)
+{
+	$PurgeLogs = [int]31
+}
+
+if (!$Days)
+{
+	$Days = [int]7
+}
+
+If ($Days -gt $PurgeLogs)
+{
+	write "ERROR: PurgeLogs parameter must be higher then days to prevent duplicate entires"
+	exit
+}
+
+if ($RMM)
+{
+	if ($RMM -eq "Syncro")
+	{
+		write "RMM Found, will run RMM code to report findings"
+	}
+	Else
+	{
+		write "$RMM is not not a valid RMM name. RMM code will not run"
+	}
+}
+else
+{
+	write "No $RMM parameter find. RMM code will not run. Valid Options are: Syncro"
+}
+
+
 
 $Date = (get-date -f yyyy-MM-dd)
-$MagnusSuccess = (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Information -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "52"})
-$MagnusWarn = (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Warning -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "52"}) 
-$MagnusError = (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Error -After (Get-Date).AddDays(-$Days)| ?{$_.eventid -eq "52"})
-$MagnusCatchall =  (Get-EventLog  -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -After (Get-Date).AddDays(-7)) 
+$BackupSuccess = (Get-EventLog -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Information, Warning -After (Get-Date).AddDays(-$Days) | ?{ $_.eventid -eq "51" })
+$BackupError = (Get-EventLog -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Error -After (Get-Date).AddDays(-$Days) | ?{ $_.eventid -eq "52" })
+$BackupCatchall = (Get-EventLog -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -After (Get-Date).AddDays(-$Days))
 
-if ($MagnusError)
+if ($ExcludeCloud.IsPresent)
 {
-WriteLog "Backup errors found"
-Write "Backup errors found"
-#YOUR RESPONSE CODE HERE" 
-exit}
-
-if ($MagnusWarn) { writeLog "Backup warnings found"
-Write "Backup warnings found, may not be an issue. Check server logs"
-#YOUR RESPOSNE CODE HERE
+	
+	$BackupWarn = (Get-EventLog -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Warning -After (Get-Date).AddDays(-$Days) | ?{ $_.eventid -eq "52" } | ?{ $_.message -notmatch "$ExcludeList" } | ?{ $_.message -notmatch "$CustomExcludeList" })
 }
-
-if ($MagnusSuccess) { writeLog "Successful backup found within the last $days days."
-write "Successful backup found"
-#YOUR RESPONSE CODE HERE
-}
-
-if (!$MagnusCatchall)
+Else
 {
-WriteLog "No Magnus events found, perhaps not running or system was offline"
-Write "No Magnus events found, perhaps not running or system was offline"
-#YOUR RESPONSE CODE HERE
+	$BackupWarn = (Get-EventLog -ErrorAction SilentlyContinue -LogName application -Source "backup-tool.exe" -EntryType Warning -After (Get-Date).AddDays(-$Days) | ?{ $_.eventid -eq "52" } | ?{ $_.message -notmatch "$CustomExcludeList" })
 }
+
+
+if ($BackupError)
+{
+	
+	foreach ($line in $BackupError)
+	{
+		$ErrInfo = $Line
+		$line = @($line.index)
+		
+		if ($line -in $CheckTracking)
+		{
+			$ErrorSkipped++
+		}
+		Else
+		{
+			$ErrorCount++
+			write $line | Out-File "$TrackingLog" -Append -Encoding ascii
+			$ErrInfo = $ErrInfo.message
+			WriteLog "$ErrInfo"
+		}
+	}
+	WriteLog "$ErrorSkipped previous warnings skipped"
+}
+
+if ($BackupWarn)
+{
+	
+	foreach ($line in $BackupWarn)
+	{
+		
+		$WarnInfo = $line
+		$line = @($line.index)
+		
+		if ($line -in $CheckTracking)
+		{
+			$WarningSkipped++
+			
+		}
+		Else
+		{
+			$WarningCount++
+			write $line | Out-File "$TrackingLog" -Append -Encoding ascii
+			$WarnInfo = $WarnInfo.message
+			WriteLog "$WarnInfo"
+			
+		}
+		
+	}
+	WriteLog "$WarningSkipped previous warnings skipped"
+}
+
+if ($BackupSuccess)
+{
+	writeLog "Successful backup found within the last $days days."
+	$SuccessCount++
+	
+}
+
+if (!$BackupCatchall)
+{
+	
+	
+	if (!(Get-Process backup-tool -ErrorAction SilentlyContinue))
+	{
+		$CheckProcess1 = "Not running"
+	}
+	Else
+	{
+		$CheckProcess1 = "Running"
+	}
+	
+	if (!(Get-Process backup-service -ErrorAction SilentlyContinue))
+	{
+		$CheckProcess2 = "Not running"
+	}
+	Else
+	{
+		$CheckProcess2 = "Running"
+	}
+	
+	
+	WriteLog "No events found, perhaps not running or system was offline. Current Backup Service status: $CheckProcess1 Current Backup Elevator Service status $CheckProcess2"
+	$CatachAllTrigger++
+}
+
+#Reporting section
+if ($CatchAllTrigger -gt "0")
+{
+	Write "No events found, perhaps not running or system was offline. Current Backup Service status: $CheckProcess1 Current Backup Elevator Service status $CheckProcess2"
+	exit
+}
+
+if ($WarningCount -gt "0")
+{
+	WriteLog "$WarningCount new warnings found"
+}
+
+if ($ErrorCount -gt "0")
+{
+	WriteLog "$ErrorCount new errors found"
+}
+
+if ($SuccessCount -gt "0")
+{
+	write "Successful backup found within the last $days days."
+	write "$ErrorCount new backup errors found"
+	write "$ErrorSkipped previous errors skipped"
+	write "$WarningCount new backup warnings found"
+	write "$WarningSkipped previous warnings skipped"
+	
+}
+Else
+{
+	write "No successful backup found within the last $days days."
+	write "$ErrorCount new backup errors found"
+	write "$ErrorSkipped previous errors skipped"
+	write "$WarningCount new backup warnings found"
+	write "$WarningSkipped previous warnings skipped"
+}
+
+
+#Cleanup
+Get-ChildItem -Path "$LogPath" | Where-Object { ($_.LastWriteTime -lt (Get-Date).AddDays(-$PurgeLogs)) } | Remove-Item
